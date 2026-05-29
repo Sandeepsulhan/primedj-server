@@ -1,5 +1,4 @@
 const express = require('express');
-console.log('STRIPE KEY:', process.env.STRIPE_SECRET_KEY ? 'loaded ✓' : 'UNDEFINED ✗');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
 

@@ -1,4 +1,5 @@
 const express = require('express');
+console.log('STRIPE KEY:', process.env.STRIPE_SECRET_KEY ? 'loaded ✓' : 'UNDEFINED ✗');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
 
@@ -6,6 +7,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Create payment intent fo
+cat > server.js << 'EOF'
+const express = require('express');
+console.log('STRIPE KEY:', process.env.STRIPE_SECRET_KEY ? 'loaded ✓' : 'UNDEFINED ✗');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Create payment intent for tips
 app.post('/create-payment-intent', async (req, res) => {
   try {
     const { amount } = req.body;
@@ -25,4 +38,4 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Server running on port ' + PORT));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

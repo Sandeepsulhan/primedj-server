@@ -28,14 +28,29 @@ app.post('/create-payment-intent', async (req, res) => {
   }
 });
 
+// ─── GET DJ INFO (supports username OR doc ID) ────────────
 app.get('/dj/:djId', async (req, res) => {
   try {
-    const doc = await db.collection('users').doc(req.params.djId).get();
-    if (!doc.exists) return res.status(404).json({ error: 'DJ not found' });
+    // First try by username
+    const usernameQuery = await db.collection('users')
+      .where('username', '==', req.params.djId)
+      .limit(1)
+      .get();
+
+    let doc;
+    if (!usernameQuery.empty) {
+      doc = usernameQuery.docs[0];
+    } else {
+      // Fall back to document ID
+      doc = await db.collection('users').doc(req.params.djId).get();
+      if (!doc.exists) return res.status(404).json({ error: 'DJ not found' });
+    }
+
     const data = doc.data();
     res.json({
       id: doc.id,
       name: data.name || data.displayName || 'DJ',
+      username: data.username || null,
       photo: data.photoURL || null,
       isLive: data.isLive || false,
       minTip: data.minTip || 0,
@@ -46,6 +61,7 @@ app.get('/dj/:djId', async (req, res) => {
   }
 });
 
+// ─── SUBMIT REQUEST (guest submits this) ──────────────────
 app.post('/requests', async (req, res) => {
   try {
     const { djId, songName, artistName, tipAmount, guestName, message } = req.body;
@@ -69,6 +85,7 @@ app.post('/requests', async (req, res) => {
   }
 });
 
+// ─── GET REQUESTS FOR DJ ──────────────────────────────────
 app.get('/requests/:djId', async (req, res) => {
   try {
     const snapshot = await db.collection('requests')
@@ -83,6 +100,7 @@ app.get('/requests/:djId', async (req, res) => {
   }
 });
 
+// ─── UPDATE REQUEST STATUS ────────────────────────────────
 app.patch('/requests/:requestId', async (req, res) => {
   try {
     const { status } = req.body;
@@ -99,6 +117,7 @@ app.patch('/requests/:requestId', async (req, res) => {
   }
 });
 
+// ─── GET SINGLE REQUEST STATUS ────────────────────────────
 app.get('/request-status/:requestId', async (req, res) => {
   try {
     const doc = await db.collection('requests').doc(req.params.requestId).get();
@@ -110,6 +129,7 @@ app.get('/request-status/:requestId', async (req, res) => {
   }
 });
 
+// ─── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'PrimeDJ Server running!' });
 });

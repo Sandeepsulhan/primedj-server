@@ -22,7 +22,7 @@ app.post('/create-payment-intent', async (req, res) => {
       currency: 'usd',
       automatic_payment_methods: { enabled: true },
     });
-    res.json({ clientSecret: paymentIntent.client_secret });
+    res.json({ clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -62,7 +62,7 @@ app.get('/dj/:djId', async (req, res) => {
 // ─── SUBMIT REQUEST (guest submits this) ──────────────────
 app.post('/requests', async (req, res) => {
   try {
-    const { djId, songName, artistName, tipAmount, guestName, message } = req.body;
+    const { djId, songName, artistName, tipAmount, guestName, message, paymentIntentId } = req.body;
     if (!djId || !songName) {
       return res.status(400).json({ error: 'djId and songName are required' });
     }
@@ -72,6 +72,8 @@ app.post('/requests', async (req, res) => {
       artist: artistName || '',
       note: message || '',
       tip: tipAmount ? `$${tipAmount}` : null,
+      tipAmount: tipAmount || 0,
+      paymentIntentId: paymentIntentId || null,
       guestName: guestName || 'Anonymous',
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -105,10 +107,33 @@ app.patch('/requests/:requestId', async (req, res) => {
     if (!['accepted', 'declined', 'played'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
-    await db.collection('requests').doc(req.params.requestId).update({
+
+    const docRef = db.collection('requests').doc(req.params.requestId);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
+    const requestData = docSnap.data();
+
+    // Auto-refund if DJ declines a paid request
+    if (status === 'declined' && requestData.paymentIntentId && requestData.tipAmount > 0) {
+      try {
+        await stripe.refunds.create({
+          payment_intent: requestData.paymentIntentId,
+        });
+        console.log(`Refund issued for paymentIntent: ${requestData.paymentIntentId}`);
+      } catch (refundError) {
+        console.error('Refund failed:', refundError.message);
+      }
+    }
+
+    await docRef.update({
       status,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
     res.json({ success: true, status });
   } catch (error) {
     res.status(500).json({ error: error.message });

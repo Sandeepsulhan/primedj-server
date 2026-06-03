@@ -64,21 +64,16 @@ app.get('/dj/:djId', async (req, res) => {
 // ─── SUBMIT REQUEST (guest submits this) ──────────────────
 app.post('/requests', async (req, res) => {
   try {
-    const { djId, songName, artistName, tipAmount, guestName, message } = req.body;
-    if (!djId || !songName) {
-      return res.status(400).json({ error: 'djId and songName are required' });
-    }
     const request = {
-      djId,
-      songName,
-      artistName: artistName || '',
-      tipAmount: tipAmount || 0,
-      guestName: guestName || 'Anonymous',
-      message: message || '',
-      status: 'pending',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    const ref = await db.collection('requests').add(request);
+  djId,
+  song: songName,
+  artist: artistName || '',
+  note: message || '',
+  tip: tipAmount ? `$${tipAmount}` : null,
+  guestName: guestName || 'Anonymous',
+  status: 'pending',
+  createdAt: admin.firestore.FieldValue.serverTimestamp(),
+};
     res.json({ id: ref.id, ...request });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -31,7 +31,6 @@ app.post('/create-payment-intent', async (req, res) => {
 // ─── GET DJ INFO (supports username OR doc ID) ────────────
 app.get('/dj/:djId', async (req, res) => {
   try {
-    // First try by username
     const usernameQuery = await db.collection('users')
       .where('username', '==', req.params.djId)
       .limit(1)
@@ -41,7 +40,6 @@ app.get('/dj/:djId', async (req, res) => {
     if (!usernameQuery.empty) {
       doc = usernameQuery.docs[0];
     } else {
-      // Fall back to document ID
       doc = await db.collection('users').doc(req.params.djId).get();
       if (!doc.exists) return res.status(404).json({ error: 'DJ not found' });
     }
@@ -64,16 +62,21 @@ app.get('/dj/:djId', async (req, res) => {
 // ─── SUBMIT REQUEST (guest submits this) ──────────────────
 app.post('/requests', async (req, res) => {
   try {
+    const { djId, songName, artistName, tipAmount, guestName, message } = req.body;
+    if (!djId || !songName) {
+      return res.status(400).json({ error: 'djId and songName are required' });
+    }
     const request = {
-  djId,
-  song: songName,
-  artist: artistName || '',
-  note: message || '',
-  tip: tipAmount ? `$${tipAmount}` : null,
-  guestName: guestName || 'Anonymous',
-  status: 'pending',
-  createdAt: admin.firestore.FieldValue.serverTimestamp(),
-};
+      djId,
+      song: songName,
+      artist: artistName || '',
+      note: message || '',
+      tip: tipAmount ? `$${tipAmount}` : null,
+      guestName: guestName || 'Anonymous',
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const ref = await db.collection('requests').add(request);
     res.json({ id: ref.id, ...request });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -118,11 +121,12 @@ app.get('/request-status/:requestId', async (req, res) => {
     const doc = await db.collection('requests').doc(req.params.requestId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Request not found' });
     const data = doc.data();
-    res.json({ id: doc.id, status: data.status, songName: data.songName });
+    res.json({ id: doc.id, status: data.status, songName: data.song });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ─── FOLLOW DJ ────────────────────────────────────────────
 app.post('/follow', async (req, res) => {
   try {
@@ -140,6 +144,7 @@ app.post('/follow', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ─── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'PrimeDJ Server running!' });

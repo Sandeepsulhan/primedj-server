@@ -128,7 +128,23 @@ app.get('/request-status/:requestId', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+// ─── FOLLOW DJ ────────────────────────────────────────────
+app.post('/follow', async (req, res) => {
+  try {
+    const { djId, email } = req.body;
+    if (!djId || !email) {
+      return res.status(400).json({ error: 'djId and email are required' });
+    }
+    await db.collection('followers').add({
+      djId,
+      email,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // ─── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'PrimeDJ Server running!' });

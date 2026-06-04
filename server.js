@@ -16,13 +16,24 @@ app.use(express.json());
 
 app.post('/create-payment-intent', async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, stripeAccountId } = req.body;
+    const amountCents = amount * 100;
+    const platformFee = Math.round(amountCents * 0.05); // 5% fee
+
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount * 100,
+      amount: amountCents,
       currency: 'usd',
       automatic_payment_methods: { enabled: true },
+      ...(stripeAccountId && {
+        application_fee_amount: platformFee,
+        transfer_data: { destination: stripeAccountId },
+      }),
     });
-    res.json({ clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id });
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+    });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

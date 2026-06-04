@@ -18,7 +18,7 @@ app.post('/create-payment-intent', async (req, res) => {
   try {
     const { amount, stripeAccountId } = req.body;
     const amountCents = amount * 100;
-    const platformFee = Math.round(amountCents * 0.05); // 5% fee
+    const platformFee = Math.round(amountCents * 0.05);
 
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amountCents,
@@ -90,6 +90,28 @@ app.post('/requests', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     const ref = await db.collection('requests').add(request);
+
+    // Send push notification to DJ
+    try {
+      const djDoc = await db.collection('users').doc(djId).get();
+      const pushToken = djDoc.exists ? djDoc.data().expoPushToken : null;
+      if (pushToken) {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: pushToken,
+            title: '🎵 New Song Request!',
+            body: `${guestName || 'Someone'} wants to hear "${songName}"${tipAmount ? ` · $${tipAmount} tip` : ''}`,
+            sound: 'default',
+            data: { requestId: ref.id },
+          }),
+        });
+      }
+    } catch (pushError) {
+      console.error('Push notification failed:', pushError.message);
+    }
+
     res.json({ id: ref.id, ...request });
   } catch (error) {
     res.status(500).json({ error: error.message });

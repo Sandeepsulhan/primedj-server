@@ -39,6 +39,54 @@ app.post('/create-payment-intent', async (req, res) => {
   }
 });
 
+// ─── STRIPE CONNECT LINK (for DJ payout settings) ────────
+app.post('/stripe-connect-link', async (req, res) => {
+  try {
+    const { uid, email } = req.body;
+    if (!uid) return res.status(400).json({ error: 'uid is required' });
+
+    // Check if DJ already has a Stripe Connect account
+    const djDoc = await db.collection('users').doc(uid).get();
+    const djData = djDoc.exists ? djDoc.data() : {};
+    let stripeAccountId = djData.stripeAccountId || null;
+
+    // Create a new Connect account if they don't have one
+    if (!stripeAccountId) {
+      const account = await stripe.accounts.create({
+        type: 'express',
+        email: email || undefined,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+      });
+      stripeAccountId = account.id;
+      await db.collection('users').doc(uid).update({ stripeAccountId });
+    }
+
+    // Generate a login link or onboarding link
+    let url;
+    try {
+      // Try login link first (works if account is fully onboarded)
+      const loginLink = await stripe.accounts.createLoginLink(stripeAccountId);
+      url = loginLink.url;
+    } catch (e) {
+      // If not fully onboarded, generate an onboarding link
+      const accountLink = await stripe.accountLinks.create({
+        account: stripeAccountId,
+        refresh_url: 'https://primedj.app/stripe-refresh',
+        return_url: 'https://primedj.app/stripe-return',
+        type: 'account_onboarding',
+      });
+      url = accountLink.url;
+    }
+
+    res.json({ url });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── GET DJ INFO (supports username OR doc ID) ────────────
 app.get('/dj/:djId', async (req, res) => {
   try {

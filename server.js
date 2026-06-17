@@ -45,7 +45,6 @@ app.post('/stripe-connect-link', async (req, res) => {
     const { uid, email } = req.body;
     if (!uid) return res.status(400).json({ error: 'uid is required' });
 
-    // Check if DJ already has a Stripe Connect account
     const djDoc = await db.collection('users').doc(uid).get();
     const djData = djDoc.exists ? djDoc.data() : {};
     let stripeAccountId = djData.stripeAccountId || null;
@@ -53,25 +52,28 @@ app.post('/stripe-connect-link', async (req, res) => {
     // Create a new Connect account if they don't have one
     if (!stripeAccountId) {
       const account = await stripe.accounts.create({
-        type: 'express',
-        email: email || undefined,
+        controller: {
+          stripe_dashboard: { type: 'express' },
+          fees: { payer: 'application' },
+          losses: { payments: 'application' },
+          requirement_collection: 'stripe',
+        },
         capabilities: {
-          card_payments: { requested: true },
           transfers: { requested: true },
         },
+        country: 'US',
+        email: email || undefined,
       });
       stripeAccountId = account.id;
       await db.collection('users').doc(uid).update({ stripeAccountId });
     }
 
-    // Generate a login link or onboarding link
+    // Try login link first, fall back to onboarding
     let url;
     try {
-      // Try login link first (works if account is fully onboarded)
       const loginLink = await stripe.accounts.createLoginLink(stripeAccountId);
       url = loginLink.url;
     } catch (e) {
-      // If not fully onboarded, generate an onboarding link
       const accountLink = await stripe.accountLinks.create({
         account: stripeAccountId,
         refresh_url: 'https://primedj.app/stripe-refresh',
@@ -83,6 +85,7 @@ app.post('/stripe-connect-link', async (req, res) => {
 
     res.json({ url });
   } catch (error) {
+    console.error('Stripe connect error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -139,7 +142,6 @@ app.post('/requests', async (req, res) => {
     };
     const ref = await db.collection('requests').add(request);
 
-    // Send push notification to DJ
     try {
       const djDoc = await db.collection('users').doc(djId).get();
       const pushToken = djDoc.exists ? djDoc.data().expoPushToken : null;
@@ -198,7 +200,6 @@ app.patch('/requests/:requestId', async (req, res) => {
 
     const requestData = docSnap.data();
 
-    // Auto-refund if DJ declines a paid request
     if (status === 'declined' && requestData.paymentIntentId && requestData.tipAmount > 0) {
       try {
         await stripe.refunds.create({

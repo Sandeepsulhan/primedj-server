@@ -49,7 +49,6 @@ app.post('/stripe-connect-link', async (req, res) => {
     const djData = djDoc.exists ? djDoc.data() : {};
     let stripeAccountId = djData.stripeAccountId || null;
 
-    // Create a new Connect account if they don't have one
     if (!stripeAccountId) {
       const account = await stripe.accounts.create({
         controller: {
@@ -59,6 +58,7 @@ app.post('/stripe-connect-link', async (req, res) => {
           requirement_collection: 'stripe',
         },
         capabilities: {
+          card_payments: { requested: true },
           transfers: { requested: true },
         },
         country: 'US',
@@ -68,7 +68,6 @@ app.post('/stripe-connect-link', async (req, res) => {
       await db.collection('users').doc(uid).update({ stripeAccountId });
     }
 
-    // Try login link first, fall back to onboarding
     let url;
     try {
       const loginLink = await stripe.accounts.createLoginLink(stripeAccountId);

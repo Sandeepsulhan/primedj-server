@@ -106,6 +106,7 @@ app.get('/dj/:djId', async (req, res) => {
     }
 
     const data = doc.data();
+    res.set('Cache-Control', 'no-store');
     res.json({
       id: doc.id,
       name: data.name || data.displayName || 'DJ',
@@ -227,6 +228,7 @@ app.get('/request-status/:requestId', async (req, res) => {
     const doc = await db.collection('requests').doc(req.params.requestId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Request not found' });
     const data = doc.data();
+    res.set('Cache-Control', 'no-store');
     res.json({ id: doc.id, status: data.status, songName: data.song });
   } catch (error) {
     res.status(500).json({ error: error.message });

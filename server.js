@@ -115,6 +115,7 @@ app.get('/dj/:djId', async (req, res) => {
       isLive: data.isLive || false,
       minTip: data.minTip || 0,
       freeRequests: data.freeRequests || 2,
+      stripeAccountId: data.stripeAccountId || null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

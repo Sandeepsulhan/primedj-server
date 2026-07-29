@@ -304,3 +304,44 @@ app.get('/api/paypal/onboarding-complete', async (req, res) => {
     res.status(500).send('Onboarding completion failed');
   }
 });
+
+// ---- PayPal Multiparty: DJ Onboarding ----
+app.post('/api/paypal/onboard-dj', async (req, res) => {
+  try {
+    const { djId, email } = req.body;
+    const accessToken = await getAccessToken();
+
+    const response = await axios.post(
+      `${PAYPAL_API}/v2/customer/partner-referrals`,
+      {
+        tracking_id: djId,
+        partner_config_override: {
+          return_url: `https://primedj-server-production.up.railway.app/api/paypal/onboarding-complete?dj=${djId}`,
+        },
+        operations: [{
+          operation: 'API_INTEGRATION',
+          api_integration_preference: {
+            rest_api_integration: {
+              integration_method: 'PAYPAL',
+              integration_type: 'THIRD_PARTY',
+              third_party_details: {
+                features: ['PAYMENT', 'REFUND'],
+              },
+            },
+          },
+        }],
+        products: ['EXPRESS_CHECKOUT'],
+        legal_consents: [{ type: 'SHARE_DATA_CONSENT', granted: true }],
+      },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const links = response.data.links;
+    const actionUrl = links.find(l => l.rel === 'action_url')?.href;
+
+    res.json({ onboardingUrl: actionUrl });
+  } catch (err) {
+    console.error('PayPal onboarding error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to create onboarding link' });
+  }
+});

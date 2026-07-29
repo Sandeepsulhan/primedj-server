@@ -6,6 +6,8 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@paypal/checkout-server-sdk": "^1.0.3",
+    "axios": "^1.18.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "firebase-admin": "^13.10.0",

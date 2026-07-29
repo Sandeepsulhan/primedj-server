@@ -116,6 +116,7 @@ app.get('/dj/:djId', async (req, res) => {
       minTip: data.minTip || 0,
       freeRequests: data.freeRequests || 2,
       stripeAccountId: data.stripeAccountId || null,
+      paypalMerchantId: data.paypalMerchantId || null,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -261,3 +262,45 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// ---- PayPal Multiparty: Onboarding Completion ----
+app.get('/api/paypal/onboarding-complete', async (req, res) => {
+  try {
+    const { dj: djId, merchantId, merchantIdInPayPal } = req.query;
+    const finalMerchantId = merchantIdInPayPal || merchantId;
+
+    if (!djId || !finalMerchantId) {
+      return res.status(400).send('Missing DJ ID or merchant ID');
+    }
+
+    await db.collection('users').doc(djId).update({
+      paypalMerchantId: finalMerchantId,
+    });
+
+    res.redirect(`https://primedj.app/dj/${djId}?onboarding=success`);
+  } catch (err) {
+    console.error('PayPal onboarding-complete error:', err.message);
+    res.status(500).send('Onboarding completion failed');
+  }
+});
+
+// ---- PayPal Multiparty: Onboarding Completion ----
+app.get('/api/paypal/onboarding-complete', async (req, res) => {
+  try {
+    const { dj: djId, merchantId, merchantIdInPayPal } = req.query;
+    const finalMerchantId = merchantIdInPayPal || merchantId;
+
+    if (!djId || !finalMerchantId) {
+      return res.status(400).send('Missing DJ ID or merchant ID');
+    }
+
+    await db.collection('users').doc(djId).update({
+      paypalMerchantId: finalMerchantId,
+    });
+
+    res.redirect(`https://primedj.app/dj/${djId}?onboarding=success`);
+  } catch (err) {
+    console.error('PayPal onboarding-complete error:', err.message);
+    res.status(500).send('Onboarding completion failed');
+  }
+});

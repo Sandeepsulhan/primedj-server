@@ -348,3 +348,87 @@ app.post('/api/paypal/onboard-dj', async (req, res) => {
     res.status(500).json({ error: 'Failed to create onboarding link' });
   }
 });
+
+// ---- PayPal Payouts: Batched DJ Payouts ----
+app.post('/api/paypal/run-payouts', async (req, res) => {
+  try {
+    const accessToken = await getAccessToken();
+
+    // Get all tip requests not yet paid out
+    const snap = await db.collection('requests')
+      .where('tipAmount', '>', 0)
+      .get();
+
+    const owedByDj = {};
+    const requestIdsByDj = {};
+
+    snap.forEach(doc => {
+      const data = doc.data();
+      if (data.paypalPayoutStatus === 'paid') return;
+      const djId = data.djId;
+      if (!djId) return;
+      owedByDj[djId] = (owedByDj[djId] || 0) + data.tipAmount;
+      requestIdsByDj[djId] = requestIdsByDj[djId] || [];
+      requestIdsByDj[djId].push(doc.id);
+    });
+
+    const djIds = Object.keys(owedByDj);
+    if (djIds.length === 0) {
+      return res.json({ message: 'No unpaid tips found.' });
+    }
+
+    const items = [];
+    for (const djId of djIds) {
+      const djDoc = await db.collection('users').doc(djId).get();
+      const djData = djDoc.data();
+      if (!djData || !djData.paypalEmail) continue;
+
+      const grossAmount = owedByDj[djId];
+      const platformFee = grossAmount * 0.05;
+      const netAmount = (grossAmount - platformFee).toFixed(2);
+
+      items.push({
+        recipient_type: 'EMAIL',
+        amount: { value: netAmount, currency: 'USD' },
+        receiver: djData.paypalEmail,
+        note: `PrimeDJ tip payout (${requestIdsByDj[djId].length} requests)`,
+        sender_item_id: djId,
+      });
+    }
+
+    if (items.length === 0) {
+      return res.json({ message: 'No DJs with a PayPal email on file.' });
+    }
+
+    const response = await axios.post(
+      `${PAYPAL_API}/v1/payments/payouts`,
+      {
+        sender_batch_header: {
+          sender_batch_id: `primedj_batch_${Date.now()}`,
+          email_subject: 'You have a PrimeDJ tip payout!',
+        },
+        items,
+      },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    // Mark all included requests as paid
+    const batch = db.batch();
+    for (const djId of djIds) {
+      if (!requestIdsByDj[djId]) continue;
+      for (const reqId of requestIdsByDj[djId]) {
+        batch.update(db.collection('requests').doc(reqId), { paypalPayoutStatus: 'paid' });
+      }
+    }
+    await batch.commit();
+
+    res.json({
+      message: 'Payout batch sent successfully.',
+      batchId: response.data.batch_header.payout_batch_id,
+      djsPaid: items.length,
+    });
+  } catch (err) {
+    console.error('PayPal payout error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to process payouts' });
+  }
+});

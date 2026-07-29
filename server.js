@@ -305,6 +305,8 @@ app.get('/api/paypal/onboarding-complete', async (req, res) => {
   }
 });
 
+const { getAccessToken, PAYPAL_API } = require('./paypalClient');
+
 // ---- PayPal Multiparty: DJ Onboarding ----
 app.post('/api/paypal/onboard-dj', async (req, res) => {
   try {

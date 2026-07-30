@@ -432,3 +432,54 @@ app.post('/api/paypal/run-payouts', async (req, res) => {
     res.status(500).json({ error: 'Failed to process payouts' });
   }
 });
+
+// ---- PayPal Standard Checkout: Create Order ----
+app.post('/api/paypal/create-order', async (req, res) => {
+  try {
+    const { tipAmount } = req.body;
+    if (!tipAmount || tipAmount <= 0) {
+      return res.status(400).json({ error: 'A positive tipAmount is required' });
+    }
+    const accessToken = await getAccessToken();
+
+    const response = await axios.post(
+      `${PAYPAL_API}/v2/checkout/orders`,
+      {
+        intent: 'CAPTURE',
+        purchase_units: [{
+          amount: {
+            currency_code: 'USD',
+            value: Number(tipAmount).toFixed(2),
+          },
+        }],
+      },
+      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+
+    res.json({ orderId: response.data.id });
+  } catch (err) {
+    console.error('PayPal create-order error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to create PayPal order' });
+  }
+});
+
+// ---- PayPal Standard Checkout: Capture Order ----
+app.post('/api/paypal/capture-order', async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ error: 'orderId is required' });
+    const accessToken = await getAccessToken();
+
+    const response = await axios.post(
+      `${PAYPAL_API}/v2/checkout/orders/${orderId}/capture`,
+      {},
+      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+
+    const captureId = response.data.purchase_units?.[0]?.payments?.captures?.[0]?.id || response.data.id;
+    res.json({ id: captureId, status: response.data.status });
+  } catch (err) {
+    console.error('PayPal capture-order error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to capture PayPal order' });
+  }
+});

@@ -1,5 +1,4 @@
 const express = require('express');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
 const admin = require('firebase-admin');
 
@@ -13,81 +12,6 @@ const db = admin.firestore();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-app.post('/create-payment-intent', async (req, res) => {
-  try {
-    const { amount, stripeAccountId } = req.body;
-    const amountCents = amount * 100;
-    const platformFee = Math.round(amountCents * 0.05);
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: 'usd',
-      automatic_payment_methods: { enabled: true },
-      ...(stripeAccountId && {
-        application_fee_amount: platformFee,
-        transfer_data: { destination: stripeAccountId },
-      }),
-    });
-
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-    });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// ─── STRIPE CONNECT LINK (for DJ payout settings) ────────
-app.post('/stripe-connect-link', async (req, res) => {
-  try {
-    const { uid, email } = req.body;
-    if (!uid) return res.status(400).json({ error: 'uid is required' });
-
-    const djDoc = await db.collection('users').doc(uid).get();
-    const djData = djDoc.exists ? djDoc.data() : {};
-    let stripeAccountId = djData.stripeAccountId || null;
-
-    if (!stripeAccountId) {
-      const account = await stripe.accounts.create({
-        controller: {
-          stripe_dashboard: { type: 'express' },
-          fees: { payer: 'application' },
-          losses: { payments: 'application' },
-          requirement_collection: 'stripe',
-        },
-        capabilities: {
-          card_payments: { requested: true },
-          transfers: { requested: true },
-        },
-        country: 'US',
-        email: email || undefined,
-      });
-      stripeAccountId = account.id;
-      await db.collection('users').doc(uid).update({ stripeAccountId });
-    }
-
-    let url;
-    try {
-      const loginLink = await stripe.accounts.createLoginLink(stripeAccountId);
-      url = loginLink.url;
-    } catch (e) {
-      const accountLink = await stripe.accountLinks.create({
-        account: stripeAccountId,
-        refresh_url: 'https://primedj.app/stripe-refresh',
-        return_url: 'https://primedj.app/stripe-return',
-        type: 'account_onboarding',
-      });
-      url = accountLink.url;
-    }
-
-    res.json({ url });
-  } catch (error) {
-    console.error('Stripe connect error:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // ─── GET DJ INFO (supports username OR doc ID) ────────────
 app.get('/dj/:djId', async (req, res) => {
@@ -115,7 +39,6 @@ app.get('/dj/:djId', async (req, res) => {
       isLive: data.isLive || false,
       minTip: data.minTip || 0,
       freeRequests: data.freeRequests || 2,
-      stripeAccountId: data.stripeAccountId || null,
       paypalMerchantId: data.paypalMerchantId || null,
     });
   } catch (error) {
@@ -204,12 +127,15 @@ app.patch('/requests/:requestId', async (req, res) => {
 
     if (status === 'declined' && requestData.paymentIntentId && requestData.tipAmount > 0) {
       try {
-        await stripe.refunds.create({
-          payment_intent: requestData.paymentIntentId,
-        });
-        console.log(`Refund issued for paymentIntent: ${requestData.paymentIntentId}`);
+        const accessToken = await getAccessToken();
+        await axios.post(
+          `${PAYPAL_API}/v2/payments/captures/${requestData.paymentIntentId}/refund`,
+          {},
+          { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+        );
+        console.log(`PayPal refund issued for capture: ${requestData.paymentIntentId}`);
       } catch (refundError) {
-        console.error('Refund failed:', refundError.message);
+        console.error('PayPal refund failed:', refundError.response?.data || refundError.message);
       }
     }
 
@@ -262,27 +188,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-// ---- PayPal Multiparty: Onboarding Completion ----
-app.get('/api/paypal/onboarding-complete', async (req, res) => {
-  try {
-    const { dj: djId, merchantId, merchantIdInPayPal } = req.query;
-    const finalMerchantId = merchantIdInPayPal || merchantId;
-
-    if (!djId || !finalMerchantId) {
-      return res.status(400).send('Missing DJ ID or merchant ID');
-    }
-
-    await db.collection('users').doc(djId).update({
-      paypalMerchantId: finalMerchantId,
-    });
-
-    res.redirect(`https://primedj.app/dj/${djId}?onboarding=success`);
-  } catch (err) {
-    console.error('PayPal onboarding-complete error:', err.message);
-    res.status(500).send('Onboarding completion failed');
-  }
-});
 
 // ---- PayPal Multiparty: Onboarding Completion ----
 app.get('/api/paypal/onboarding-complete', async (req, res) => {

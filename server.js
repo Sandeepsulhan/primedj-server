@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 
 const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 
@@ -46,14 +47,116 @@ app.get('/dj/:djId', async (req, res) => {
   }
 });
 
+// ─── PROMO CODES ──────────────────────────────────────────
+// Firestore collection "promoCodes", doc ID = the code (uppercase).
+// Fields: djId, active, label, usedCount, createdAt.
+function normalizeCode(code) {
+  return String(code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 40);
+}
+
+async function getValidPromo(code, djId) {
+  const id = normalizeCode(code);
+  if (!id || !djId) return null;
+  const snap = await db.collection('promoCodes').doc(id).get();
+  if (!snap.exists) return null;
+  const p = snap.data();
+  if (!p.active || p.djId !== djId) return null;
+  return { id, ref: snap.ref, ...p };
+}
+
+// Light in-memory rate limit so codes can't be guessed in bulk
+const promoAttempts = new Map();
+function promoRateLimit(req, res, next) {
+  const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+  const now = Date.now();
+  const recent = (promoAttempts.get(ip) || []).filter(t => now - t < 60000);
+  if (recent.length >= 15) return res.status(429).json({ error: 'Too many attempts. Try again in a minute.' });
+  recent.push(now);
+  promoAttempts.set(ip, recent);
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  const key = process.env.ADMIN_KEY;
+  if (!key || key.length < 16) return res.status(503).json({ error: 'Admin key not configured' });
+  const given = Buffer.from(req.get('x-admin-key') || '');
+  const expected = Buffer.from(key);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// Guest checks a code before sending a request
+app.post('/api/promo/validate', promoRateLimit, async (req, res) => {
+  try {
+    const { code, djId } = req.body;
+    const promo = await getValidPromo(code, djId);
+    res.json({ valid: !!promo });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not check code' });
+  }
+});
+
+// Admin: create a code  { code, djId, label }
+app.post('/api/admin/promo', requireAdmin, async (req, res) => {
+  try {
+    const id = normalizeCode(req.body.code);
+    const { djId, label } = req.body;
+    if (!id || !djId) return res.status(400).json({ error: 'code and djId are required' });
+    await db.collection('promoCodes').doc(id).set({
+      djId,
+      label: label || '',
+      active: true,
+      usedCount: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    res.json({ code: id, djId, active: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin: list codes
+app.get('/api/admin/promo', requireAdmin, async (req, res) => {
+  try {
+    const snap = await db.collection('promoCodes').get();
+    res.json(snap.docs.map(d => ({ code: d.id, ...d.data() })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin: turn a code off  { code }
+app.post('/api/admin/promo/disable', requireAdmin, async (req, res) => {
+  try {
+    const id = normalizeCode(req.body.code);
+    const ref = db.collection('promoCodes').doc(id);
+    if (!(await ref.get()).exists) return res.status(404).json({ error: 'Code not found' });
+    await ref.update({ active: false });
+    res.json({ code: id, active: false });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── SUBMIT REQUEST (guest submits this) ──────────────────
 app.post('/requests', async (req, res) => {
   try {
-    const { djId, songName, artistName, tipAmount, guestName, message, paymentIntentId } = req.body;
+    const { djId, songName, artistName, tipAmount, guestName, message, paymentIntentId, promoCode } = req.body;
     if (!djId || !songName) {
       return res.status(400).json({ error: 'djId and songName are required' });
     }
+
+    // Optional promo code: must be active and belong to this DJ (checked server-side)
+    let promo = null;
+    if (promoCode) {
+      promo = await getValidPromo(promoCode, djId);
+      if (!promo) return res.status(400).json({ error: 'Invalid promo code' });
+    }
+
     const request = {
+      ...(promo ? { promoCode: promo.id } : {}),
       djId,
       song: songName,
       artist: artistName || '',
@@ -66,6 +169,9 @@ app.post('/requests', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     const ref = await db.collection('requests').add(request);
+    if (promo) {
+      await promo.ref.update({ usedCount: admin.firestore.FieldValue.increment(1) }).catch(() => {});
+    }
 
     try {
       const djDoc = await db.collection('users').doc(djId).get();

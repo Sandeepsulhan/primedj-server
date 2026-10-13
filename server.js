@@ -361,7 +361,7 @@ app.post('/api/paypal/onboard-dj', async (req, res) => {
 });
 
 // ---- PayPal Payouts: Batched DJ Payouts ----
-app.post('/api/paypal/run-payouts', async (req, res) => {
+app.post('/api/paypal/run-payouts', requireAdmin, async (req, res) => {
   try {
     const accessToken = await getAccessToken();
 
@@ -389,10 +389,12 @@ app.post('/api/paypal/run-payouts', async (req, res) => {
     }
 
     const items = [];
+    const paidDjIds = []; // only DJs actually included in this payout batch
+    const skippedDjIds = []; // DJs with tips owed but no PayPal email yet
     for (const djId of djIds) {
       const djDoc = await db.collection('users').doc(djId).get();
       const djData = djDoc.data();
-      if (!djData || !djData.paypalEmail) continue;
+      if (!djData || !djData.paypalEmail) { skippedDjIds.push(djId); continue; }
 
       const grossAmount = owedByDj[djId];
       const platformFee = grossAmount * 0.05;
@@ -405,6 +407,7 @@ app.post('/api/paypal/run-payouts', async (req, res) => {
         note: `PrimeDJ tip payout (${requestIdsByDj[djId].length} requests)`,
         sender_item_id: djId,
       });
+      paidDjIds.push(djId);
     }
 
     if (items.length === 0) {
@@ -423,20 +426,21 @@ app.post('/api/paypal/run-payouts', async (req, res) => {
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
-    // Mark all included requests as paid
-    const batch = db.batch();
-    for (const djId of djIds) {
-      if (!requestIdsByDj[djId]) continue;
-      for (const reqId of requestIdsByDj[djId]) {
+    // Mark ONLY the requests of DJs that were actually paid (in chunks, Firestore limits batches to 500 writes)
+    const paidRequestIds = paidDjIds.flatMap(djId => requestIdsByDj[djId] || []);
+    for (let i = 0; i < paidRequestIds.length; i += 400) {
+      const batch = db.batch();
+      for (const reqId of paidRequestIds.slice(i, i + 400)) {
         batch.update(db.collection('requests').doc(reqId), { paypalPayoutStatus: 'paid' });
       }
+      await batch.commit();
     }
-    await batch.commit();
 
     res.json({
       message: 'Payout batch sent successfully.',
       batchId: response.data.batch_header.payout_batch_id,
       djsPaid: items.length,
+      djsSkippedNoPaypalEmail: skippedDjIds.length,
     });
   } catch (err) {
     console.error('PayPal payout error:', err.response?.data || err.message);
